@@ -18,21 +18,27 @@ export default function JudgePage() {
   const [isLoading, setIsLoading] = React.useState(false)
   const [checks, setChecks] = React.useState({ u1: 0, u2: 0 })
   const [result, setResult] = React.useState<Result | null>(null)
+  const [isConnected, setIsConnected] = React.useState(false)
 
+  // This function will now be responsible for fetching the status
   const fetchStatus = async () => {
     if (!matchId) return
-    const res = await fetch(`/api/duel/status?matchId=${encodeURIComponent(matchId)}`)
-    if (!res.ok) return
-    const data = (await res.json()) as {
-      user1Uploaded: boolean
-      user2Uploaded: boolean
-      resultReady: boolean
+    try {
+      const res = await fetch(`/api/duel/status?matchId=${encodeURIComponent(matchId)}`)
+      if (!res.ok) return
+      const data = (await res.json()) as {
+        user1Uploaded: boolean
+        user2Uploaded: boolean
+        resultReady: boolean
+      }
+      setStatus({ user1: data.user1Uploaded, user2: data.user2Uploaded, ready: data.resultReady })
+    } catch (error) {
+      console.error("Failed to fetch status:", error)
     }
-    setStatus({ user1: data.user1Uploaded, user2: data.user2Uploaded, ready: data.resultReady })
   }
 
   const startCompare = async () => {
-    if (!matchId) return
+    if (!matchId || isLoading) return
     setIsLoading(true)
     setResult(null)
     setChecks({ u1: 0, u2: 0 })
@@ -66,12 +72,46 @@ export default function JudgePage() {
     }
   }
 
+  // Effect to handle polling
+  React.useEffect(() => {
+    let intervalId: NodeJS.Timeout | null = null
+    if (isConnected && !isLoading) {
+      intervalId = setInterval(async () => {
+        await fetchStatus()
+      }, 2000) // Poll every 2 seconds
+    }
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId)
+      }
+    }
+  }, [isConnected, isLoading])
+
+  // Effect to automatically start comparison
+  React.useEffect(() => {
+    if (status.user1 && status.user2 && isConnected && !isLoading && !result) {
+      startCompare()
+    }
+  }, [status, isConnected, isLoading, result])
+
+  const handleConnect = () => {
+    setIsConnected(true)
+    fetchStatus()
+  }
+
+  const handleDisconnect = () => {
+    setIsConnected(false)
+    // Also reset the status when disconnecting
+    setStatus({ user1: false, user2: false, ready: false });
+    setResult(null);
+  }
+
   return (
     <main className="mx-auto max-w-4xl px-4 py-10">
       <header className="mb-6">
         <h1 className="text-balance text-3xl font-semibold">Judge</h1>
         <p className="mt-2 text-muted-foreground">
-          Enter the shared Match ID, verify both submissions, then run the comparison.
+          Enter the shared Match ID, connect to the session, and the comparison will start automatically once both users have submitted their code.
         </p>
       </header>
 
@@ -80,18 +120,31 @@ export default function JudgePage() {
           <CardTitle>Match</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3">
-          <Label htmlFor="matchj">Match ID</Label>
-          <div className="flex items-center gap-2">
-            <Input
-              id="matchj"
-              placeholder="Enter the same Match ID the users used"
-              value={matchId}
-              onChange={(e) => setMatchId(e.target.value)}
-            />
-            <Button variant="secondary" onClick={fetchStatus} disabled={!matchId || isLoading}>
-              Refresh
-            </Button>
-          </div>
+          {!isConnected ? (
+            <>
+              <Label htmlFor="matchj">Match ID</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="matchj"
+                  placeholder="Enter the same Match ID the users used"
+                  value={matchId}
+                  onChange={(e) => setMatchId(e.target.value)}
+                />
+                <Button onClick={handleConnect} disabled={!matchId || isLoading}>
+                  Connect
+                </Button>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center justify-between">
+              <p className="text-sm">
+                Connected to Match ID: <span className="font-semibold">{matchId}</span>
+              </p>
+              <Button variant="secondary" onClick={handleDisconnect} disabled={isLoading}>
+                Disconnect
+              </Button>
+            </div>
+          )}
 
           <div className="mt-2 grid grid-cols-2 gap-4 text-sm">
             <div className="rounded-md border p-3">
@@ -106,12 +159,6 @@ export default function JudgePage() {
                 {status.user2 ? "Uploaded" : "Waiting"}
               </div>
             </div>
-          </div>
-
-          <div className="mt-3">
-            <Button onClick={startCompare} disabled={!status.user1 || !status.user2 || isLoading}>
-              {isLoading ? "Analyzing..." : "Start Comparison"}
-            </Button>
           </div>
         </CardContent>
       </Card>
